@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Head Sizing Tool - Accuracy Mode</title>
+    <title>Head Sizing Tool - Pro Accuracy</title>
     
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -202,7 +202,7 @@
         .loader { border: 4px solid rgba(0,0,0,0.1); border-top: 4px solid var(--accent-yellow); border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; display: none; margin: 20px auto; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
-        /* --- NEW: DOTS CSS --- */
+        /* --- DOTS CSS --- */
         .progress-dots { display: flex; gap: 16px; justify-content: center; margin: 25px 0; }
         .dot { width: 16px; height: 16px; background: #e0e0e0; border-radius: 50%; transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
         .dot.active { background: var(--btn-bg); transform: scale(1.3); }
@@ -283,7 +283,6 @@
             <div id="interstitial-overlay" class="result-overlay">
                 <div class="result-card-inner">
                     <div class="result-label" id="inter-label">Progress</div>
-                    
                     <div class="result-category" id="inter-title" style="font-size: 2.5rem;">Round Complete</div>
                     
                     <div class="progress-dots" id="progress-dots"></div>
@@ -377,7 +376,7 @@
         interTitle: document.getElementById('inter-title'),
         interBtn: document.getElementById('inter-btn'),
         tempRes: document.getElementById('temp-result'),
-        dotsContainer: document.getElementById('progress-dots'), // New
+        dotsContainer: document.getElementById('progress-dots'), 
 
         final: document.getElementById('final-overlay'),
         finalWidth: document.getElementById('final-width'),
@@ -468,7 +467,6 @@
     function updateDots(completedCount, total) {
         let html = '';
         for(let i=0; i<total; i++) {
-            // If i is less than completed count, it's active
             const activeClass = i < completedCount ? 'active' : '';
             html += `<span class="dot ${activeClass}"></span>`;
         }
@@ -495,6 +493,19 @@
         if (values.length === 0) return 0;
         const sum = values.reduce((a, b) => a + b, 0);
         return sum / values.length;
+    }
+
+    // --- NEW: HAND TILT CHECKS ---
+    function isHandFlat(handLandmarks) {
+        // Index MCP (5) vs Pinky MCP (17)
+        const yDiff = Math.abs(handLandmarks[5].y - handLandmarks[17].y);
+        return yDiff < 0.05; // Tolerance
+    }
+
+    function isFingerHorizontal(handLandmarks) {
+        // Index Tip (8) vs Index MCP (5)
+        const yDiff = Math.abs(handLandmarks[8].y - handLandmarks[5].y);
+        return yDiff < 0.05; // Tolerance
     }
 
     function categorizeHead(measuredW, measuredH) {
@@ -553,6 +564,21 @@
             ui.levelBubble.style.transform = `translate(calc(-50% + ${-bubbleX}px), calc(-50% + ${bubbleY}px))`;
             const isBalanced = Math.sqrt(bubbleX*bubbleX + bubbleY*bubbleY) < 15;
 
+            // --- HAND TILT DETECTION ---
+            let handWarning = "";
+            if (results.leftHandLandmarks && results.rightHandLandmarks) {
+                if (mode === 'width') {
+                    const leftOk = isFingerHorizontal(results.leftHandLandmarks);
+                    const rightOk = isFingerHorizontal(results.rightHandLandmarks);
+                    if (!leftOk || !rightOk) handWarning = "Level Fingers";
+                } else {
+                    const lY = results.leftHandLandmarks[0].y;
+                    const rY = results.rightHandLandmarks[0].y;
+                    let topHand = (lY < rY) ? results.leftHandLandmarks : results.rightHandLandmarks;
+                    if (!isHandFlat(topHand)) handWarning = "Flatten Palm";
+                }
+            }
+
             if (isBalanced) {
                 ui.levelGauge.classList.add('balanced');
                 ui.levelBubble.style.backgroundColor = '#00FDCF'; 
@@ -563,6 +589,10 @@
 
             const offsetX = Math.abs(nose.x - 0.5);
             if (offsetX > 0.1) warning = "Center Face";
+            else if (handWarning !== "") {
+                warning = handWarning;
+                isFaceAligned = false; 
+            }
             else if (!isBalanced) {
                 if (Math.abs(yawRaw) > 0.04) warning = "Look Straight";
                 else if (pitchDelta < -0.03) warning = "Look Down"; 
@@ -736,46 +766,33 @@
     function finishMeasurementSection() {
         isScanning = false;
         
-        // 1. Get result for THIS specific round
         const result = getMedian(measurementBuffer);
         const rounded = Math.round(result);
         
-        // 2. Add to readings array
         readings.push(rounded);
         
-        // 3. Logic: Are we done with all rounds?
         if (readings.length < MAX_ROUNDS) {
-            // -- INTERMEDIATE ROUND --
             ui.interLabel.innerText = "Progress";
             ui.interTitle.innerText = "Round Complete";
-            
-            // HIDE Number
             ui.tempRes.style.display = 'none';
-            
-            // SHOW Dots
             ui.dotsContainer.style.display = 'flex';
-            updateDots(readings.length, MAX_ROUNDS); // e.g. 1 completed out of 3
+            updateDots(readings.length, MAX_ROUNDS);
             
             ui.interBtn.innerText = `Start Round ${readings.length + 1}`;
             ui.interBtn.onclick = nextRound;
             
             ui.interstitial.style.display = 'flex';
         } else {
-            // -- FINAL (3rd) ROUND DONE --
             const meanVal = Math.round(getMean(readings));
             
             if (mode === 'width') {
                 widthVal = meanVal;
                 
-                // Show FINAL Result for Section
                 ui.interLabel.innerText = "Section Complete";
                 ui.interTitle.innerText = "Average Width";
                 
-                // SHOW Number
                 ui.tempRes.innerText = `${widthVal} mm`;
                 ui.tempRes.style.display = 'block';
-                
-                // HIDE Dots (Optional, or show all filled)
                 ui.dotsContainer.style.display = 'none';
 
                 ui.interBtn.innerText = "Continue to Height";
